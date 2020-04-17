@@ -1,0 +1,6 @@
+{
+  "port": 3131,
+  "hostname": "127.0.0.1",
+  "apiBaseUrl": "https://hw.shri.yandex/api/",
+  "apiToken": "API_TOKEN"
+}

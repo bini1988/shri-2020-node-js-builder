@@ -1,0 +1,6 @@
+{
+  "port": 3232,
+  "hostname": "127.0.0.1",
+  "serverHost": "127.0.0.1",
+  "serverPort": 3131
+}
