@@ -1,22 +1,15 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const asyncHandler = require('express-async-handler');
+const https = require('https');
+const axios = require('axios');
 const conf = require('./server-conf.json');
+const Server = require('./src/server');
 
-const app = express();
-const router = express.Router();
-
-app.use(bodyParser.json());
-
-router.post('/notify-agent', asyncHandler(async (req, res) => {
-  res.status(200).json({ data: '/notify-agent' });
-}));
-router.post('/notify-build-result', asyncHandler(async (req, res) => {
-  res.status(200).json({ data: '/notify-build-result' });
-}));
-
-app.use(router);
-
-app.listen(conf.port, conf.hostname, () => {
-  console.log(`Server was successfully started at ${conf.hostname}:${conf.port}`);
+const {
+  port, hostname, apiBaseUrl, apiToken,
+} = conf;
+const api = axios.create({
+  baseURL: apiBaseUrl,
+  headers: { Authorization: `Bearer ${apiToken}` },
+  httpsAgent: new https.Agent({ rejectUnauthorized: false }),
 });
+
+Server.create({ port, hostname, api }).run();
