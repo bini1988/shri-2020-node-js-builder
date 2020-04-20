@@ -22,7 +22,7 @@ class Server {
     this.port = port;
     this.hostname = hostname;
     this.host = `${hostname}:${port}`;
-    this.app = this.createApp();
+    this.server = this.createServer();
     this.api = api;
     this.configs = new Map();
     this.agents = new Agents();
@@ -31,31 +31,28 @@ class Server {
   }
 
   run() {
-    this.app.listen(this.port, this.hostname, async () => {
+    this.server.listen(this.port, this.hostname, async () => {
       this.log(`Server was started at ${this.host}`);
       this.enqueueBuilds();
     }).on('error', (error) => {
-      console.log('[Server] Some error happened', error);
+      this.log('Some error happened', error.message);
     });
   }
 
   log(message) {
-    const timestamp = moment().format('H:mm:ss');
-    console.log(`[Server][${timestamp}] ${message}`);
+    console.log(`[Server][${moment().format('H:mm:ss')}] ${message}`);
   }
 
-  createApp() {
-    const app = express();
-
-    app.use(bodyParser.json());
-
+  createServer() {
+    const server = express();
     const router = express.Router();
 
+    server.use(bodyParser.json());
     router.post('/notify-agent', this.createNotifyAgentHandler(this));
     router.post('/notify-build-result', this.createNotifyBuildHandler(this));
-    app.use(router);
+    server.use(router);
 
-    return app;
+    return server;
   }
 
   async enqueueBuilds() {
@@ -64,7 +61,7 @@ class Server {
     this.log('Fetching waiting builds list...');
 
     return Promise.all([
-      this.fetchConfiguration(),
+      this.api.fetchConfiguration(),
       this.fetchBuilds(),
     ]).then(([config = {}, buildsByStatus]) => {
       const { Waiting = [], InProgress = [] } = buildsByStatus;
@@ -115,7 +112,7 @@ class Server {
       const { id: agentId, task: { startTime } = {} } = agent;
 
       if (build.status === 'Waiting') {
-        await this.startBuild(buildId, startTime);
+        await this.api.startBuild({ buildId, startTime });
       }
       this.log(`Build ${buildId} is progressed by agent ${agentId}`);
       this.waitingQueue.dequeue();
@@ -156,16 +153,8 @@ class Server {
     }
   }
 
-  fetchConfiguration() {
-    return this.api.get('/conf').then((res) => {
-      const { data = null } = res.data;
-      return data;
-    });
-  }
-
   fetchBuilds() {
-    return this.api.get('/build/list').then((res) => {
-      const { data = [] } = res.data;
+    return this.api.fetchBuilds().then((data) => {
       return data.reduce((out, it) => {
         if (out[it.status]) {
           out[it.status].push(it);
@@ -175,19 +164,6 @@ class Server {
         Waiting: [], InProgress: [],
       });
     });
-  }
-
-  /**
-   * Задать сборке статус выполненния
-   * @param {string} buildId Индентификатор сборки
-   * @param {string} dateTime Время начала сборки
-   */
-  startBuild(buildId, dateTime) {
-    return this.api.post('/build/start', { buildId, dateTime });
-  }
-
-  finishBuild(buildId, params) {
-    return this.api.post('/build/finish', { ...params, buildId });
   }
 
   /**
@@ -211,7 +187,7 @@ class Server {
 
       server.log(`Agent ${id} has completion notice for build ${buildId}`);
       try {
-        await server.finishBuild(buildId, { duration, success, buildLog });
+        await server.api.finishBuild({ buildId, duration, success, buildLog });
         server.log(`Successfully finishing build ${buildId}`);
       } catch (error) {
         server.log(`Can not finish build ${buildId}`);

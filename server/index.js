@@ -1,15 +1,7 @@
-const https = require('https');
-const axios = require('axios');
 const conf = require('./server-conf.json');
 const Server = require('./src/server');
+const api = require('./src/ci-api');
 
-const {
-  port, hostname, apiBaseUrl, apiToken,
-} = conf;
-const api = axios.create({
-  baseURL: apiBaseUrl,
-  headers: { Authorization: `Bearer ${apiToken}` },
-  httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-});
+const { port, hostname } = conf;
 
 Server.create({ port, hostname, api }).run();
