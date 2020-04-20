@@ -206,8 +206,8 @@ class Agent {
    */
   createPingHandler(agent) {
     return asyncHandler(async (req, res) => {
-      const { id, host } = agent;
-      res.status(200).json({ id, host });
+      const { id, host, task } = agent;
+      res.status(200).json({ id, host, task });
     });
   }
 

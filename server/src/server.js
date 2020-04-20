@@ -1,3 +1,4 @@
+/* eslint-disable no-param-reassign */
 /* eslint-disable object-curly-newline */
 /* eslint-disable class-methods-use-this */
 const express = require('express');
@@ -25,14 +26,14 @@ class Server {
     this.api = api;
     this.configs = new Map();
     this.agents = new Agents();
-    this.agentsQueue = new Queue();
-    this.buildsQueue = new Queue();
+    this.waitingQueue = new Queue();
+    this.inProgressQueue = new Queue();
   }
 
   run() {
     this.app.listen(this.port, this.hostname, async () => {
       this.log(`Server was started at ${this.host}`);
-      this.enqueueWaitingBuilds();
+      this.enqueueBuilds();
     }).on('error', (error) => {
       console.log('[Server] Some error happened', error);
     });
@@ -57,69 +58,102 @@ class Server {
     return app;
   }
 
-  async enqueueWaitingBuilds() {
+  async enqueueBuilds() {
     const ENQUEUE_TIMEOUT = 10000;
 
     this.log('Fetching waiting builds list...');
 
     return Promise.all([
       this.fetchConfiguration(),
-      this.fetchWaitingBuilds(),
-    ]).then(([config = {}, builds = []]) => {
+      this.fetchBuilds(),
+    ]).then(([config = {}, buildsByStatus]) => {
+      const { Waiting = [], InProgress = [] } = buildsByStatus;
+
       if (config.id) {
         this.configs.set(config.id, config);
       }
-      if (builds.length > 0) {
-        this.buildsQueue.enqueue(builds.reverse());
+      if (Waiting.length > 0) {
+        this.waitingQueue.enqueue(Waiting.reverse());
+        this.log(`Enqueued ${Waiting.length} waiting builds`);
       }
-      this.log(`Fetched and enqueued ${builds.length} builds`);
+      if (InProgress.length > 0) {
+        this.inProgressQueue.enqueue(InProgress.reverse());
+        this.log(`Enqueued ${InProgress.length} in progress builds`);
+      }
     }).catch((error) => {
       this.log('Can not fetch builds list ', error.message);
     }).finally(() => {
-      if (this.buildsQueue.size > 0) {
-        setImmediate(() => this.processBuildsQueue());
-      } else {
+      if (this.waitingQueue.size) {
+        setImmediate(() => this.processWaitingQueue());
+      }
+      if (this.inProgressQueue.size) {
+        setImmediate(() => this.processInProgressQueue());
+      }
+      if (!this.waitingQueue.size && !this.inProgressQueue.size) {
         this.log(`Retry fetch builds list after ${ENQUEUE_TIMEOUT} ms...`);
-        setTimeout(() => this.enqueueWaitingBuilds(), ENQUEUE_TIMEOUT);
+        setTimeout(() => this.enqueueBuilds(), ENQUEUE_TIMEOUT);
       }
     });
   }
 
-  async processBuildsQueue() {
-    const build = this.buildsQueue.front();
-    const queueSize = this.buildsQueue.size;
-    const { id, configurationId } = build;
+  async processWaitingQueue() {
+    const build = this.waitingQueue.front();
+    const queueSize = this.waitingQueue.size;
+    const { id: buildId, configurationId } = build;
 
-    this.log(`Processing build ${id} (${queueSize - 1} more in queue)`);
+    this.log(`Processing build ${buildId} (${queueSize - 1} more in queue)`);
 
     if (!this.configs.has(configurationId)) {
-      this.log(`Cannot receive config for build ${id}, removed from queue`);
-      this.buildsQueue.dequeue();
+      this.log(`No config for build ${buildId}, removed from queue`);
+      this.waitingQueue.dequeue();
     }
-
     await this.agents.waitAvailables();
 
     try {
       const config = this.configs.get(configurationId);
       const agent = await this.agents.assing(build, config);
-      const { id: agentId, task: { buildId, startTime } = {} } = agent;
+      const { id: agentId, task: { startTime } = {} } = agent;
 
-      try {
+      if (build.status === 'Waiting') {
         await this.startBuild(buildId, startTime);
-      } catch (error) {
-        this.log(`Cannot set build status in progress ${error.message}`);
       }
-
       this.log(`Build ${buildId} is progressed by agent ${agentId}`);
-      this.buildsQueue.dequeue();
+      this.waitingQueue.dequeue();
     } catch (error) {
-      this.log(`Cannot assing build ${id} to agent ${error.message}`);
+      this.log(`Cannot assing build ${buildId} to agent ${error.message}`);
     }
 
-    if (this.buildsQueue.size) {
-      setImmediate(() => this.processBuildsQueue());
+    if (this.waitingQueue.size) {
+      setImmediate(() => this.processWaitingQueue());
+    } else if (this.inProgressQueue.size) {
+      setImmediate(() => this.processInProgressQueue());
     } else {
-      setImmediate(() => this.enqueueWaitingBuilds());
+      setImmediate(() => this.enqueueBuilds());
+    }
+  }
+
+  async processInProgressQueue() {
+    const ENQUEUE_TIMEOUT = 20000;
+    const build = this.inProgressQueue.dequeue();
+    const { id: buildId } = build;
+
+    try {
+      const isInProgress = await this.agents.isInProgress(buildId);
+      if (!isInProgress) {
+        this.waitingQueue.enqueue(build);
+      } else {
+        this.log(`Build ${buildId} is in progress`);
+      }
+    } catch (error) {
+      this.log(`Failed in progress build ${buildId} check`);
+    }
+
+    if (this.inProgressQueue.size) {
+      setImmediate(() => this.processInProgressQueue());
+    } else if (this.waitingQueue.size) {
+      setImmediate(() => this.processWaitingQueue());
+    } else {
+      setTimeout(() => this.enqueueBuilds(), ENQUEUE_TIMEOUT);
     }
   }
 
@@ -130,10 +164,17 @@ class Server {
     });
   }
 
-  fetchWaitingBuilds() {
+  fetchBuilds() {
     return this.api.get('/build/list').then((res) => {
       const { data = [] } = res.data;
-      return data.filter((it) => it.status === 'Waiting');
+      return data.reduce((out, it) => {
+        if (out[it.status]) {
+          out[it.status].push(it);
+        }
+        return out;
+      }, {
+        Waiting: [], InProgress: [],
+      });
     });
   }
 

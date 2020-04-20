@@ -71,6 +71,31 @@ class Agents {
     return axios.post(`${agent.host}/build`, agent.task)
       .then(({ data }) => data);
   }
+
+  /**
+   * Запрашивает статус агента
+   * @param {Object} agent Параменты агента
+   */
+  async ping(agent) {
+    return axios.get(`${agent.host}/ping`)
+      .then(({ data }) => data);
+  }
+
+  /**
+   * Проверить находится ли сборка в проссе обработки
+   * @param {Object} buildId Индентификатор сборки
+   */
+  async isInProgress(buildId) {
+    const agent = Object
+      .values(this.agents)
+      .find(({ task }) => task && task.buildId === buildId);
+
+    if (agent) {
+      const ping = await this.ping(agent);
+      return ping && ping.task && (ping.task.buildId === buildId);
+    }
+    return false;
+  }
 }
 
 module.exports = Agents;
