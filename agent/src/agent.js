@@ -196,7 +196,10 @@ class Agent {
         agent.build();
 
         const { id, host, task } = agent;
-        res.status(200).json({ id, host, task });
+        const { buildId } = params;
+        res.status(200).json({
+          id, host, task, buildId,
+        });
       }
     });
   }

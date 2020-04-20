@@ -3,8 +3,8 @@
  * Очередь
  */
 class Queue {
-  constructor() {
-    this.items = [];
+  constructor(items = []) {
+    this.items = items;
   }
 
   /**

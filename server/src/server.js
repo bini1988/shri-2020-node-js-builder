@@ -5,7 +5,7 @@ const express = require('express');
 const moment = require('moment');
 const bodyParser = require('body-parser');
 const asyncHandler = require('express-async-handler');
-const Agents = require('./agents');
+const Pool = require('./pool');
 const Queue = require('./queue');
 
 class Server {
@@ -24,10 +24,10 @@ class Server {
     this.host = `${hostname}:${port}`;
     this.server = this.createServer();
     this.api = api;
+    this.pool = new Pool();
     this.configs = new Map();
-    this.agents = new Agents();
-    this.waitingQueue = new Queue();
-    this.inProgressQueue = new Queue();
+    this.queue = new Queue();
+    this.ENQUEUE_TIMEOUT = 20000;
   }
 
   run() {
@@ -55,115 +55,74 @@ class Server {
     return server;
   }
 
-  async enqueueBuilds() {
-    const ENQUEUE_TIMEOUT = 10000;
+  checkQueue() {
+    if (this.queue.size) {
+      setImmediate(() => this.processQueue());
+      return;
+    }
+    setTimeout(() => this.enqueueBuilds(), this.ENQUEUE_TIMEOUT);
+  }
 
-    this.log('Fetching waiting builds list...');
+  async enqueueBuilds() {
+    this.log('Fetching builds list...');
 
     return Promise.all([
       this.api.fetchConfiguration(),
-      this.fetchBuilds(),
-    ]).then(([config = {}, buildsByStatus]) => {
-      const { Waiting = [], InProgress = [] } = buildsByStatus;
-
-      if (config.id) {
+      this.api.fetchBuilds(['Waiting', 'InProgress']),
+    ]).then(([config, builds]) => {
+      if (config && config.id) {
         this.configs.set(config.id, config);
       }
-      if (Waiting.length > 0) {
-        this.waitingQueue.enqueue(Waiting.reverse());
-        this.log(`Enqueued ${Waiting.length} waiting builds`);
-      }
-      if (InProgress.length > 0) {
-        this.inProgressQueue.enqueue(InProgress.reverse());
-        this.log(`Enqueued ${InProgress.length} in progress builds`);
+      if (builds && builds.length) {
+        this.queue.enqueue(builds);
+        this.log(`Enqueued ${builds.length} builds`);
       }
     }).catch((error) => {
-      this.log('Can not fetch builds list ', error.message);
+      this.log('Can not fetch builds list ', error);
     }).finally(() => {
-      if (this.waitingQueue.size) {
-        setImmediate(() => this.processWaitingQueue());
-      }
-      if (this.inProgressQueue.size) {
-        setImmediate(() => this.processInProgressQueue());
-      }
-      if (!this.waitingQueue.size && !this.inProgressQueue.size) {
-        this.log(`Retry fetch builds list after ${ENQUEUE_TIMEOUT} ms...`);
-        setTimeout(() => this.enqueueBuilds(), ENQUEUE_TIMEOUT);
-      }
+      this.checkQueue();
     });
   }
 
-  async processWaitingQueue() {
-    const build = this.waitingQueue.front();
-    const queueSize = this.waitingQueue.size;
-    const { id: buildId, configurationId } = build;
+  async processQueue() {
+    const build = this.queue.front();
+    const { id: buildId, configurationId, status } = build;
+    const config = this.configs.get(configurationId);
 
-    this.log(`Processing build ${buildId} (${queueSize - 1} more in queue)`);
-
-    if (!this.configs.has(configurationId)) {
+    if (!config) {
       this.log(`No config for build ${buildId}, removed from queue`);
-      this.waitingQueue.dequeue();
+      this.queue.dequeue();
+      return;
     }
-    await this.agents.waitAvailables();
+    if (status === 'Waiting') {
+      // Если сборка в ожидании, необходимо передать её агенту для сборки
+      this.log(`Processing waiting build ${buildId}`);
+      await this.processBuild(build, config);
+    } else if (status === 'InProgress') {
+      // Если сборка в процессе, проверим активен ли агент выполняющий сборку
+      this.log(`Processing in progress build ${buildId}`);
 
-    try {
-      const config = this.configs.get(configurationId);
-      const agent = await this.agents.assing(build, config);
-      const { id: agentId, task: { startTime } = {} } = agent;
-
-      if (build.status === 'Waiting') {
-        await this.api.startBuild({ buildId, startTime });
+      if (await this.pool.isNotInProgress(buildId)) {
+        await this.processBuild(build, config);
       }
-      this.log(`Build ${buildId} is progressed by agent ${agentId}`);
-      this.waitingQueue.dequeue();
-    } catch (error) {
-      this.log(`Cannot assing build ${buildId} to agent ${error.message}`);
     }
-
-    if (this.waitingQueue.size) {
-      setImmediate(() => this.processWaitingQueue());
-    } else {
-      setImmediate(() => this.enqueueBuilds());
-    }
+    this.queue.dequeue();
+    this.checkQueue();
   }
 
-  async processInProgressQueue() {
-    const ENQUEUE_TIMEOUT = 20000;
-    const build = this.inProgressQueue.dequeue();
-    const { id: buildId } = build;
+  async processBuild(build, config) {
+    await this.pool.await();
+    const { task = {} } = await this.pool.assing(build, config);
 
-    try {
-      const isInProgress = await this.agents.isInProgress(buildId);
-      if (!isInProgress) {
-        this.waitingQueue.enqueue(build);
-        this.log(`Put ${buildId} in waiting queue`);
-      } else {
-        this.log(`Build ${buildId} is in progress`);
+    if (build.status === 'Waiting') {
+      try {
+        await this.api.startBuild({
+          buildId: build.id, startTime: task.startTime,
+        });
+      } catch (error) {
+        this.log(`Can not set build ${build.id} in progress status`);
       }
-    } catch (error) {
-      this.log(`Failed in progress build ${buildId} check`);
     }
-
-    if (this.inProgressQueue.size) {
-      setImmediate(() => this.processInProgressQueue());
-    } else if (this.waitingQueue.size) {
-      setImmediate(() => this.processWaitingQueue());
-    } else {
-      setTimeout(() => this.enqueueBuilds(), ENQUEUE_TIMEOUT);
-    }
-  }
-
-  fetchBuilds() {
-    return this.api.fetchBuilds().then((data) => {
-      return data.reduce((out, it) => {
-        if (out[it.status]) {
-          out[it.status].push(it);
-        }
-        return out;
-      }, {
-        Waiting: [], InProgress: [],
-      });
-    });
   }
 
   /**
@@ -172,7 +131,7 @@ class Server {
   createNotifyAgentHandler(server) {
     return asyncHandler(async (req, res) => {
       const { id, host } = req.body;
-      server.agents.register(id, host);
+      server.pool.add(id, host);
       res.status(200).end();
     });
   }
@@ -182,17 +141,18 @@ class Server {
    */
   createNotifyBuildHandler(server) {
     return asyncHandler(async (req, res) => {
-      const { id, task = {} } = req.body;
-      const { buildId, duration, success, output: buildLog } = task;
+      const { id, host, task = {} } = req.body;
+      const { buildId, duration, status, success, output: buildLog } = task;
 
-      server.log(`Agent ${id} has completion notice for build ${buildId}`);
+      server.log(`Agent #${id} is finished build ${buildId}`);
+
       try {
         await server.api.finishBuild({ buildId, duration, success, buildLog });
-        server.log(`Successfully finishing build ${buildId}`);
+        server.log(`Change build ${buildId} status to '${status}'`);
       } catch (error) {
-        server.log(`Can not finish build ${buildId}`);
+        server.log(`Can not change build ${buildId} status`);
       } finally {
-        server.agents.free(id);
+        server.pool.add(id, host);
       }
       res.status(200).end();
     });

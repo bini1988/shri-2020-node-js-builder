@@ -26,11 +26,15 @@ module.exports = {
   },
   /**
    * Получить список сборок
+   * @param {string} statuses Статусы возвращаемых сборок
    * @return {Promise<Object[]>}
    */
-  fetchBuilds() {
+  fetchBuilds(statuses = []) {
     return instance.get('/build/list')
-      .then(({ data: { data = [] } }) => data);
+      .then(({ data: { data = [] } }) => data)
+      .then((items = []) => items.filter(
+        ({ status }) => statuses.includes(status),
+      ));
   },
   /**
    * Задать сборке статус в процессе выполнения
