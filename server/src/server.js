@@ -125,8 +125,6 @@ class Server {
 
     if (this.waitingQueue.size) {
       setImmediate(() => this.processWaitingQueue());
-    } else if (this.inProgressQueue.size) {
-      setImmediate(() => this.processInProgressQueue());
     } else {
       setImmediate(() => this.enqueueBuilds());
     }
@@ -141,6 +139,7 @@ class Server {
       const isInProgress = await this.agents.isInProgress(buildId);
       if (!isInProgress) {
         this.waitingQueue.enqueue(build);
+        this.log(`Put ${buildId} in waiting queue`);
       } else {
         this.log(`Build ${buildId} is in progress`);
       }
