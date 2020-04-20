@@ -30,7 +30,7 @@ class Agent {
 
     this.port = port;
     this.hostname = hostname;
-    this.app = this.createApp();
+    this.server = this.createServer();
     this.api = api;
 
     this.task = null;
@@ -39,7 +39,7 @@ class Agent {
   run() {
     this.identify(this.port);
 
-    this.app.listen(this.port, this.hostname, () => {
+    this.server.listen(this.port, this.hostname, () => {
       this.log(`Server was started at ${this.host}`);
       this.register();
     }).on('error', (error) => {
@@ -66,13 +66,11 @@ class Agent {
     error && console.log(error);
   }
 
-  createApp() {
+  createServer() {
     const app = express();
-
-    app.use(bodyParser.json());
-
     const router = express.Router();
 
+    app.use(bodyParser.json());
     router.post('/build', this.createBuildHandler(this));
     router.get('/ping', this.createPingHandler(this));
     app.use(router);
@@ -82,17 +80,16 @@ class Agent {
 
   register() {
     const ATTEMPT_TIMEOUT = 7000; // ms
-    const hostname = this.api.defaults.baseURL;
     const { id, host } = this;
 
     this.log('Trying to register...');
 
-    this.api.post('/notify-agent', { id, host }).then(() => {
+    this.api.notifyAgent(id, host).then(() => {
       this.attempts = 0;
-      this.log(`Registered on server at ${hostname}`);
+      this.log(`Registered on server at ${this.api.baseURL}`);
     }).catch((error) => {
       this.log((error.code === 'ENOTFOUND')
-        ? `Can not found server at ${hostname}...`
+        ? `Can not found server at ${this.api.baseURL}...`
         : 'Some error happened');
       setTimeout(() => this.register(), ATTEMPT_TIMEOUT);
     });
@@ -169,7 +166,7 @@ class Agent {
 
     this.log('Notify server...');
 
-    return this.api.post('/notify-build-result', params).then(() => {
+    return this.api.notifyAgentBuild(params).then(() => {
       this.log(`Notification for '${task.buildId}' is successful sended`);
     }).catch(() => {
       this.log(`Notification for '${task.buildId}' is failed`);
@@ -196,10 +193,7 @@ class Agent {
         agent.build();
 
         const { id, host, task } = agent;
-        const { buildId } = params;
-        res.status(200).json({
-          id, host, task, buildId,
-        });
+        res.status(200).json({ id, host, task });
       }
     });
   }

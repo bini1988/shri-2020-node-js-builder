@@ -1,12 +1,7 @@
-const axios = require('axios');
 const conf = require('./agent-conf.json');
 const Agent = require('./src/agent');
+const api = require('./src/server-api');
 
-const {
-  port, hostname, serverHost, serverPort,
-} = conf;
-const api = axios.create({
-  baseURL: `http://${serverHost}:${serverPort}`,
-});
+const { port, hostname } = conf;
 
 Agent.create({ port, hostname, api }).run();
