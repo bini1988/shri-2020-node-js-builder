@@ -42,7 +42,7 @@ async function cloneRepo(repoName, path, branch = 'master') {
   try {
     await execute(`git clone ${repoName} -b ${branch} ${path}`);
   } catch (error) {
-    throw new Error(`Can not clone repo ${repoName}`);
+    throw new Error(`Can not clone repo ${repoName} ${error.message}`);
   }
 }
 
@@ -55,7 +55,7 @@ async function checkoutRepo(path, commitHash) {
   try {
     await execute(`git -C ${path} checkout ${commitHash}`);
   } catch (error) {
-    throw new Error(`Can not checkout repo on ${commitHash}`);
+    throw new Error(`Can not checkout repo on ${commitHash} ${error.message}`);
   }
 }
 

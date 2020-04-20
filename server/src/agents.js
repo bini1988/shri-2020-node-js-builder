@@ -5,7 +5,7 @@ const Queue = require('./queue');
 
 class Agents {
   constructor() {
-    this.agents = new Map();
+    this.agents = {};
     this.agentsIds = new Queue();
   }
 
@@ -21,15 +21,14 @@ class Agents {
    */
   register(id, host) {
     this.agentsIds.enqueue(id);
-    this.agents.set(id, { id, host });
+    this.agents[id] = { id, host };
     this.log(`Agent ${id} was registered`);
   }
 
   free(id) {
-    if (this.agents.has(id)) {
-      const agent = this.agents.get(id);
-      agent.task = null;
-      this.agentsIds.enqueue(agent.id);
+    if (this.agents[id]) {
+      this.agents[id].task = null;
+      this.agentsIds.enqueue(id);
     }
   }
 
@@ -61,7 +60,7 @@ class Agents {
     }
 
     const agentId = this.agentsIds.dequeue();
-    const agent = this.agents.get(agentId);
+    const agent = this.agents[agentId];
     const { repoName, buildCommand, mainBranch } = config;
     const { id: buildId, commitHash, branchName = mainBranch } = build;
 

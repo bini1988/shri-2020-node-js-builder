@@ -30,19 +30,14 @@ class Agent {
 
     this.port = port;
     this.hostname = hostname;
-    this.host = `http://${hostname}:${port}`;
-    this.id = `[Agent Smith #${this.port}]`;
     this.app = this.createApp();
-    this.cwd = path.join(process.cwd(), 'tmp');
-    this.task = null;
-
     this.api = api;
-    this.attempts = 0;
+
+    this.task = null;
   }
 
   run() {
-    this.id = `[Agent Smith #${this.port}]`;
-    this.host = `http://${this.hostname}:${this.port}`;
+    this.identify(this.port);
 
     this.app.listen(this.port, this.hostname, () => {
       this.log(`Server was started at ${this.host}`);
@@ -57,9 +52,16 @@ class Agent {
     });
   }
 
+  identify(port) {
+    this.id = port;
+    this.port = port;
+    this.host = `http://${this.hostname}:${port}`;
+    this.cwd = path.join(process.cwd(), `tmp_${port}`);
+  }
+
   log(message, error) {
     const timestamp = moment().format('H:mm:ss');
-    console.log(`${this.id}[${timestamp}] ${message}`);
+    console.log(`[Agent Smith #${this.id}][${timestamp}] ${message}`);
     // eslint-disable-next-line no-unused-expressions
     error && console.log(error);
   }
@@ -79,22 +81,19 @@ class Agent {
   }
 
   register() {
-    this.attempts++;
-
     const ATTEMPT_TIMEOUT = 7000; // ms
-    const tag = `[attempt #${this.attempts}]`;
     const hostname = this.api.defaults.baseURL;
     const { id, host } = this;
 
-    this.log(`${tag} Trying to register...`);
+    this.log('Trying to register...');
 
     this.api.post('/notify-agent', { id, host }).then(() => {
       this.attempts = 0;
-      this.log(`${tag} Registered on server at ${hostname}`);
+      this.log(`Registered on server at ${hostname}`);
     }).catch((error) => {
       this.log((error.code === 'ENOTFOUND')
-        ? `${tag} Can not found server at ${hostname}...`
-        : `${tag} Some error happened`);
+        ? `Can not found server at ${hostname}...`
+        : 'Some error happened');
       setTimeout(() => this.register(), ATTEMPT_TIMEOUT);
     });
   }
@@ -150,17 +149,18 @@ class Agent {
       this.task.status = 'Success';
       this.task.success = true;
       this.task.duration = moment().diff(this.task.startTime);
-      this.log('Build command is successful finished');
+      this.log('Build is successful finished');
     } catch (error) {
       this.task.output = error.output;
       this.task.status = 'Fail';
       this.task.success = false;
       this.task.duration = moment().diff(this.task.startTime);
-      this.log('Build command is failed');
+      this.log(`Build is failed ${error.message}`);
     }
     this.log(`Execute build for '${buildId}' is finished`);
 
     await this.complete();
+    await this.clear();
   }
 
   async complete() {
@@ -174,7 +174,7 @@ class Agent {
     }).catch(() => {
       this.log(`Notification for '${task.buildId}' is failed`);
     }).finally(() => {
-      this.task = {};
+      this.task = null;
     });
   }
 

@@ -104,12 +104,16 @@ class Server {
       const agent = await this.agents.assing(build, config);
       const { id: agentId, task: { buildId, startTime } = {} } = agent;
 
-      await this.startBuild(buildId, startTime);
+      try {
+        await this.startBuild(buildId, startTime);
+      } catch (error) {
+        this.log(`Cannot set build status in progress ${error.message}`);
+      }
 
       this.log(`Build ${buildId} is progressed by agent ${agentId}`);
       this.buildsQueue.dequeue();
     } catch (error) {
-      this.log(`Cannot assing build ${id} to agent`);
+      this.log(`Cannot assing build ${id} to agent ${error.message}`);
     }
 
     if (this.buildsQueue.size) {
