@@ -173,6 +173,7 @@ class Agent {
       this.log(`Notification for '${task.buildId}' is successful sended`);
     }).catch(() => {
       this.log(`Notification for '${task.buildId}' is failed`);
+      this.register();
     }).finally(() => {
       this.task = null;
     });
