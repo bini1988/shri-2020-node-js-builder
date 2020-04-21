@@ -117,7 +117,7 @@ class Server {
     if (build.status === 'Waiting') {
       try {
         await this.api.startBuild({
-          buildId: build.id, startTime: task.startTime,
+          buildId: build.id, dateTime: task.startTime,
         });
       } catch (error) {
         this.log(`Can not set build ${build.id} in progress status`);
